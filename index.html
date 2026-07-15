@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Passive-Aggressive Email Translator</title>
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --bg: #0f1117; --card: #191c26; --line: #2a2f3d;
+    --text: #e6e9f0; --muted: #8b93a7; --accent: #7c6cff; --accent2: #ff6c9c;
+  }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 40px 18px 60px;
+  }
+  h1 { font-size: clamp(1.5rem, 4vw, 2.3rem); margin: 0 0 6px; text-align: center; }
+  .accent { background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  p.tag { color: var(--muted); margin: 0 0 28px; text-align: center; }
+  .wrap { width: 100%; max-width: 640px; }
+  label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: 8px;
+    text-transform: uppercase; letter-spacing: .08em; }
+  textarea {
+    width: 100%; min-height: 110px; resize: vertical; background: var(--card);
+    color: var(--text); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px; font-size: 1rem; font-family: inherit; line-height: 1.5;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  .toneRow { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+  .tone {
+    background: var(--card); border: 1px solid var(--line); color: var(--muted);
+    padding: 8px 14px; border-radius: 999px; cursor: pointer; font-size: .85rem;
+    transition: .15s;
+  }
+  .tone.active { border-color: var(--accent); color: var(--text); background: #23273a; }
+  button.go {
+    width: 100%; margin-top: 4px; padding: 15px; border: none; border-radius: 14px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    color: white; font-size: 1.05rem; font-weight: 600; cursor: pointer;
+    transition: transform .06s;
+  }
+  button.go:active { transform: scale(.985); }
+  .output {
+    margin-top: 24px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 20px; min-height: 80px; line-height: 1.6;
+    white-space: pre-wrap; position: relative;
+  }
+  .output.empty { color: var(--muted); font-style: italic; }
+  .meta { display: flex; justify-content: space-between; align-items: center;
+    margin-top: 14px; gap: 12px; flex-wrap: wrap; }
+  .meter { flex: 1; min-width: 180px; }
+  .meter .bar { height: 8px; background: #23273a; border-radius: 999px; overflow: hidden; }
+  .meter .fill { height: 100%; width: 0; border-radius: 999px;
+    background: linear-gradient(90deg, #ffc15c, var(--accent2)); transition: width .5s; }
+  .meter small { color: var(--muted); font-size: .75rem; }
+  .copy {
+    background: #23273a; border: 1px solid var(--line); color: var(--text);
+    padding: 9px 16px; border-radius: 10px; cursor: pointer; font-size: .85rem;
+  }
+  .copy:hover { border-color: var(--accent); }
+  .foot { color: var(--muted); font-size: .8rem; margin-top: 34px; text-align: center; max-width: 520px; }
+</style>
+</head>
+<body>
+  <h1>The <span class="accent">Passive-Aggressive</span> Email Translator</h1>
+  <p class="tag">Type what you actually mean. Get what you're allowed to send.</p>
+
+  <div class="wrap">
+    <label for="inp">What you want to say</label>
+    <textarea id="inp" placeholder="e.g. You never replied to my email and now everything is on fire."></textarea>
+
+    <div class="toneRow" id="tones">
+      <div class="tone active" data-tone="corporate">🙂 Corporate Polite</div>
+      <div class="tone" data-tone="petty">😤 Peak Petty</div>
+      <div class="tone" data-tone="hr">📋 HR-Approved</div>
+    </div>
+
+    <button class="go" id="go">Translate to Office-Speak →</button>
+
+    <label style="margin-top:24px">The email you'll actually send</label>
+    <div class="output empty" id="out">Your beautifully weaponized email will appear here…</div>
+
+    <div class="meta">
+      <div class="meter">
+        <div class="bar"><div class="fill" id="fill"></div></div>
+        <small id="rating">Passive-aggression meter</small>
+      </div>
+      <button class="copy" id="copy">📋 Copy</button>
+    </div>
+  </div>
+
+  <p class="foot">Warning: 100% of relationships damaged by these emails were technically "just following up." Use responsibly. Or don't.</p>
+
+<script>
+let tone = "corporate";
+const openers = {
+  corporate: ["Hi,\n\n", "Hello,\n\nHope you're well.\n\n", "Hi team,\n\n"],
+  petty: ["Hi,\n\n", "Hello again,\n\n", "Hi (third time!),\n\n"],
+  hr: ["Hi,\n\nThanks for your patience.\n\n", "Hello,\n\n"]
+};
+const closers = {
+  corporate: ["\n\nBest,\n[Your Name]", "\n\nThanks so much,\n[Your Name]", "\n\nKind regards,\n[Your Name]"],
+  petty: ["\n\nBest,\n[Your Name]", "\n\nWarmly (unlike this email),\n[Your Name]", "\n\nLooking forward to literally any reply,\n[Your Name]"],
+  hr: ["\n\nAppreciate you,\n[Your Name]", "\n\nThanks in advance,\n[Your Name]"]
+};
+
+// phrase-level replacements: [regex, corporate, petty, hr]
+const rules = [
+  [/you never (replied|responded|answered)/i,
+    "I wanted to follow up as I haven't yet heard back",
+    "Circling back on the email you've clearly been ignoring",
+    "I appreciate that this may have slipped through — following up again"],
+  [/you (are|'re) (wrong|mistaken)/i,
+    "I have a slightly different understanding here",
+    "Per the facts, which I did send you, this isn't quite right",
+    "There may be a difference in understanding worth aligning on"],
+  [/this is (late|overdue)/i,
+    "just checking in on timing here",
+    "gently reminding you this was due a while ago",
+    "flagging the timeline for visibility"],
+  [/do (it|this) (now|asap)/i,
+    "would it be possible to prioritize this",
+    "at your earliest convenience (i.e. today)",
+    "when you have a moment, this is time-sensitive"],
+  [/everything is on fire|it'?s? (broken|a mess)/i,
+    "there are a few items that may need attention",
+    "we're now dealing with the fallout of the thing I flagged earlier",
+    "some issues have surfaced that we should address together"],
+  [/i told you( so)?/i,
+    "as noted previously",
+    "as per my last email (which you may have missed)",
+    "revisiting an earlier point for clarity"],
+  [/read the (email|thread|doc|document)/i,
+    "the details are in the thread below for reference",
+    "kindly refer to the email I already sent",
+    "sharing the relevant context again below"],
+  [/hurry up|speed (it|this) up/i,
+    "any update on timing would be appreciated",
+    "the suspense is genuinely killing the project",
+    "a quick status update would help us plan"],
+  [/that'?s? not my (job|problem)/i,
+    "this may sit better with another team",
+    "happy to help, though this falls a bit outside my remit",
+    "let's clarify ownership so it lands with the right person"],
+  [/stop (emailing|messaging) me/i,
+    "let's consolidate updates going forward",
+    "we could probably reduce the email volume here",
+    "suggesting we align on a communication cadence"],
+  [/you forgot/i,
+    "just flagging in case it slipped",
+    "adding this back since it seems to have vanished",
+    "noting this for completeness"]
+];
+
+const softeners = ["just", "quick", "gentle", "friendly"];
+
+function translate(text) {
+  if (!text.trim()) return null;
+  let body = text.trim();
+  let hits = 0;
+  for (const [re, c, p, h] of rules) {
+    if (re.test(body)) {
+      hits++;
+      const rep = tone === "corporate" ? c : tone === "petty" ? p : h;
+      body = body.replace(re, rep);
+    }
+  }
+  // generic softening if nothing matched
+  if (hits === 0) {
+    if (tone === "corporate") body = "Just following up on this — " + lower(body) + " Let me know your thoughts when you get a chance.";
+    else if (tone === "petty") body = "Following up (again) on this: " + lower(body) + " I'm sure it just slipped your mind. Repeatedly.";
+    else body = "Flagging this for visibility: " + lower(body) + " Happy to discuss.";
+  }
+  const opener = pick(openers[tone]);
+  const closer = pick(closers[tone]);
+  const score = Math.min(100, 25 + hits * 18 + (tone === "petty" ? 30 : tone === "hr" ? 10 : 0));
+  return { email: opener + body + closer, score };
+}
+
+const lower = s => s.charAt(0).toLowerCase() + s.slice(1);
+const pick = a => a[Math.floor(Math.random() * a.length)];
+
+function ratingText(s) {
+  if (s < 35) return "Suspiciously sincere";
+  if (s < 55) return "Professionally frosty";
+  if (s < 75) return "Weaponized politeness";
+  if (s < 90) return "HR is watching";
+  return "☢️ Nuclear. Per my last email.";
+}
+
+const inp = document.getElementById('inp');
+const out = document.getElementById('out');
+const fill = document.getElementById('fill');
+const rating = document.getElementById('rating');
+
+document.getElementById('tones').addEventListener('click', e => {
+  const t = e.target.closest('.tone'); if (!t) return;
+  document.querySelectorAll('.tone').forEach(x => x.classList.remove('active'));
+  t.classList.add('active'); tone = t.dataset.tone;
+});
+
+function run() {
+  const r = translate(inp.value);
+  if (!r) {
+    out.className = "output empty";
+    out.textContent = "Type something first — ideally something you'd get fired for sending raw.";
+    fill.style.width = "0"; rating.textContent = "Passive-aggression meter";
+    return;
+  }
+  out.className = "output";
+  out.textContent = r.email;
+  fill.style.width = r.score + "%";
+  rating.textContent = r.score + "% — " + ratingText(r.score);
+}
+
+document.getElementById('go').addEventListener('click', run);
+inp.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') run(); });
+
+document.getElementById('copy').addEventListener('click', () => {
+  if (out.classList.contains('empty')) return;
+  navigator.clipboard.writeText(out.textContent).then(() => {
+    const b = document.getElementById('copy');
+    b.textContent = "✓ Copied. Godspeed."; setTimeout(() => b.textContent = "📋 Copy", 1600);
+  });
+});
+</script>
+</body>
+</html>
