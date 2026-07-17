@@ -62,6 +62,15 @@
   }
   .copy:hover { border-color: var(--accent); }
   .foot { color: var(--muted); font-size: .8rem; margin-top: 34px; text-align: center; max-width: 520px; }
+  .modeRow {
+    display: flex; gap: 6px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 5px; margin-bottom: 22px;
+  }
+  .mode {
+    flex: 1; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer;
+    color: var(--muted); font-size: .9rem; transition: .15s;
+  }
+  .mode.active { background: linear-gradient(90deg, var(--accent), var(--accent2)); color: #fff; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -69,7 +78,12 @@
   <p class="tag">Type what you actually mean. Get what you're allowed to send.</p>
 
   <div class="wrap">
-    <label for="inp">What you want to say</label>
+    <div class="modeRow" id="modes">
+      <div class="mode active" data-mode="encode">✍️ Write it</div>
+      <div class="mode" data-mode="decode">🕵️ Decode theirs</div>
+    </div>
+
+    <label for="inp" id="inpLabel">What you want to say</label>
     <textarea id="inp" placeholder="e.g. You never replied to my email and now everything is on fire."></textarea>
 
     <div class="toneRow" id="tones">
@@ -80,7 +94,7 @@
 
     <button class="go" id="go">Translate to Office-Speak →</button>
 
-    <label style="margin-top:24px">The email you'll actually send</label>
+    <label style="margin-top:24px" id="outLabel">The email you'll actually send</label>
     <div class="output empty" id="out">Your beautifully weaponized email will appear here…</div>
 
     <div class="meta">
@@ -157,6 +171,64 @@ const rules = [
 
 const softeners = ["just", "quick", "gentle", "friendly"];
 
+// Decoder: [regex, what they actually meant, threat level 0-100]
+const decodeRules = [
+  [/per my last email/i, "I already told you this and I am documenting that fact.", 95],
+  [/as (previously )?(noted|discussed|mentioned)/i, "You weren't listening. I have receipts.", 80],
+  [/just (following up|checking in|circling back)/i, "This is the 4th time. I'm counting.", 70],
+  [/gentle (reminder|nudge)/i, "There is nothing gentle happening inside me right now.", 75],
+  [/(any|an) update( on this)?\??/i, "You've done nothing and we both know it.", 72],
+  [/at your earliest convenience/i, "Today. It means today.", 68],
+  [/for (visibility|awareness)/i, "I am CC'ing your manager and pretending it's routine.", 88],
+  [/adding \w+ to (this thread|the thread)/i, "I'm escalating, but politely.", 85],
+  [/(happy|glad) to (help|discuss|jump on a call)/i, "I would rather not, but here we are.", 45],
+  [/(let'?s )?(align|sync|touch base|connect) (on|about)/i, "A meeting will now exist because you didn't read.", 55],
+  [/(as|per) (the|our) (agreed|original) (timeline|scope)/i, "You are moving the goalposts and I noticed.", 78],
+  [/hope (this|that) (helps|clarifies)/i, "It was already clear. You didn't read it.", 60],
+  [/(no )?(worries|rush)( at all)?[.!]?/i, "There are worries. There is a rush.", 62],
+  [/(thanks|thank you) in advance/i, "You are doing this. This is not a request.", 66],
+  [/(looping|bringing) you in/i, "You're now responsible for this. Congratulations.", 70],
+  [/(just )?to clarify/i, "You got it wrong. Here it is again, slower.", 64],
+  [/(friendly|quick) reminder/i, "Neither friendly nor quick. A reminder, though.", 71],
+  [/(sorry|apologies) for the (confusion|delay)/i, "This was your fault, but I'll take the hit for optics.", 58],
+  [/(when|if) you (get|have) a (chance|moment|sec)/i, "Now. The answer to when is now.", 52],
+  [/(going forward|moving forward)/i, "Never do that again.", 74],
+  [/(bumping|resurfacing) this/i, "This email has been rotting in your inbox for days.", 76],
+  [/(kindly|please) (refer|see|find)/i, "It was always right there. You did not look.", 69],
+  [/(let me know|lmk) (your )?thoughts/i, "Agree with me.", 48],
+  [/(as a )?(heads[- ]?up|fyi)/i, "I'm creating a paper trail.", 67],
+  [/(circling|coming) back (around )?(to|on)/i, "You ghosted me. I'm back.", 73]
+];
+
+function decode(text) {
+  if (!text.trim()) return null;
+  const found = [];
+  for (const [re, meaning, threat] of decodeRules) {
+    const m = text.match(re);
+    if (m) found.push({ phrase: m[0].trim(), meaning, threat });
+  }
+  if (!found.length) {
+    return {
+      email: "🔍 No passive-aggressive markers detected.\n\nEither this person genuinely likes you, or they've evolved past language into pure, silent contempt. Proceed with cautious optimism.",
+      score: 10
+    };
+  }
+  const body = found.map(f => `“${f.phrase}”\n   → ${f.meaning}`).join("\n\n");
+  const score = Math.min(100, Math.round(found.reduce((a, f) => a + f.threat, 0) / found.length) + (found.length - 1) * 5);
+  return {
+    email: `🕵️ Decoded ${found.length} marker${found.length > 1 ? "s" : ""}:\n\n${body}`,
+    score
+  };
+}
+
+function threatText(s) {
+  if (s < 35) return "Probably sincere. Weird.";
+  if (s < 55) return "Mild seasoning of contempt";
+  if (s < 75) return "You are in trouble";
+  if (s < 90) return "Manager has been CC'd";
+  return "☢️ Update your résumé";
+}
+
 function translate(text) {
   if (!text.trim()) return null;
   let body = text.trim();
@@ -202,18 +274,59 @@ document.getElementById('tones').addEventListener('click', e => {
   t.classList.add('active'); tone = t.dataset.tone;
 });
 
+let mode = "encode";
+
+const modeCfg = {
+  encode: {
+    inpLabel: "What you want to say",
+    outLabel: "The email you'll actually send",
+    placeholder: "e.g. You never replied to my email and now everything is on fire.",
+    btn: "Translate to Office-Speak →",
+    emptyOut: "Your beautifully weaponized email will appear here…",
+    emptyIn: "Type something first — ideally something you'd get fired for sending raw.",
+    meterLabel: "Passive-aggression meter"
+  },
+  decode: {
+    inpLabel: "The email they sent you",
+    outLabel: "What they actually meant",
+    placeholder: "e.g. Hi! Just a gentle reminder — per my last email, any update on this? Adding Karen for visibility.",
+    btn: "Decode the Real Message →",
+    emptyOut: "Paste their email. Let's find out how much trouble you're in…",
+    emptyIn: "Paste an email first — the more 'friendly' it sounds, the better.",
+    meterLabel: "Threat level"
+  }
+};
+
+document.getElementById('modes').addEventListener('click', e => {
+  const m = e.target.closest('.mode'); if (!m) return;
+  document.querySelectorAll('.mode').forEach(x => x.classList.remove('active'));
+  m.classList.add('active');
+  mode = m.dataset.mode;
+  const cfg = modeCfg[mode];
+  document.getElementById('inpLabel').textContent = cfg.inpLabel;
+  document.getElementById('outLabel').textContent = cfg.outLabel;
+  inp.placeholder = cfg.placeholder;
+  document.getElementById('go').textContent = cfg.btn;
+  document.getElementById('tones').style.display = mode === "encode" ? "flex" : "none";
+  out.className = "output empty";
+  out.textContent = cfg.emptyOut;
+  fill.style.width = "0";
+  rating.textContent = cfg.meterLabel;
+});
+
 function run() {
-  const r = translate(inp.value);
+  const cfg = modeCfg[mode];
+  const r = mode === "encode" ? translate(inp.value) : decode(inp.value);
   if (!r) {
     out.className = "output empty";
-    out.textContent = "Type something first — ideally something you'd get fired for sending raw.";
-    fill.style.width = "0"; rating.textContent = "Passive-aggression meter";
+    out.textContent = cfg.emptyIn;
+    fill.style.width = "0"; rating.textContent = cfg.meterLabel;
     return;
   }
   out.className = "output";
   out.textContent = r.email;
   fill.style.width = r.score + "%";
-  rating.textContent = r.score + "% — " + ratingText(r.score);
+  rating.textContent = r.score + "% — " + (mode === "encode" ? ratingText(r.score) : threatText(r.score));
 }
 
 document.getElementById('go').addEventListener('click', run);
